@@ -1,5 +1,6 @@
 use std::fs;
-#[derive(PartialEq, Eq, Debug)]
+const TIME_PER_DISTANCE: f64 = 1.0;
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 pub enum NodeType {
     Client,
     Sat,
@@ -7,31 +8,33 @@ pub enum NodeType {
     Depot,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub struct Node {
-    pos: (f64, f64),
-    demand: f64,
-    start_time_window: f64,
-    end_time_window: f64,
-    service_time: f64,
-    node_type: NodeType,
+    pub pos: (f64, f64),
+    pub demand: f64,
+    pub start_time_window: f64,
+    pub end_time_window: f64,
+    pub service_time: f64,
+    pub node_type: NodeType,
+    pub node_id: usize,
 }
 
-#[derive(PartialEq, Eq, Debug)]
-enum VehicleType {
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+pub enum VehicleType {
     Electric,
     Truck,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub struct Vehicle { // TODO: make fields private
-    vehicle_type: VehicleType,
-    capacity: f64,
-    cost_per_distance: f64,
-    vehicle_cost: f64,
-    battery: Option<f64>,
-    battery_per_distance: Option<f64>,
-    recharging_rate: Option<f64>,
+    pub vehicle_type: VehicleType,
+    pub capacity: f64,
+    pub cost_per_distance: f64,
+    pub time_per_distance: f64,
+    pub vehicle_cost: f64,
+    pub battery: Option<f64>,
+    pub battery_per_distance: Option<f64>,
+    pub recharging_rate: Option<f64>,
 }
 
 #[derive(PartialEq, Debug, Default)]
@@ -39,12 +42,12 @@ pub struct Instance {
     nodes: Vec<Node>,
     vehicles: Vec<Vehicle>,
     distance_matrix: Vec<Vec<f64>>, // matrix //
-    n_evs: u32,
-    n_trucks: u32,
-    n_sats: u32,
-    n_clients: u32,
-    n_stations: u32,
-    max_route_stations: u32, //3
+    n_evs: usize,
+    n_trucks: usize,
+    n_sats: usize,
+    n_clients: usize,
+    n_stations: usize,
+    max_route_stations: usize, //3
     truck_capacity: f64,
     ev_capacity: f64,
     ev_battery: f64,
@@ -76,12 +79,12 @@ impl Instance {
         nodes: Vec<Node>,
         vehicles: Vec<Vehicle>,
         distance_matrix: Vec<Vec<f64>>, // matrix //
-        n_evs: u32,
-        n_trucks: u32,
-        n_sats: u32,
-        n_clients: u32,
-        n_stations: u32,
-        max_route_stations: u32, //3
+        n_evs: usize,
+        n_trucks: usize,
+        n_sats: usize,
+        n_clients: usize,
+        n_stations: usize,
+        max_route_stations: usize, //3
         truck_capacity: f64,
         ev_capacity: f64,
         ev_battery: f64,
@@ -92,21 +95,61 @@ impl Instance {
             max_route_stations, truck_capacity, ev_capacity, ev_battery
         }
     }
-    /* pub fn n_evs(&mut self, n_evs: u32) -> &mut Self{
+    // get ranges
+    pub fn get_clients(&self) -> &[Node]{
+        let client_range = self.get_client_range();
+        &self.nodes[client_range.0 .. client_range.1]
+    }
+    pub fn get_sats(&self) -> &[Node]{
+        let sat_range = self.get_sat_range();
+        &self.nodes[sat_range.0 .. sat_range.1]
+    }
+    pub fn get_stations(&self) -> &[Node]{
+        let station_range = self.get_client_range();
+        &self.nodes[station_range.0 .. station_range.1]
+    }
+    pub fn get_depots(&self) -> &[Node]{
+        let depot_range = self.get_client_range();
+        &self.nodes[depot_range.0 .. depot_range.1]
+    }
+    pub fn get_depot(&self) -> &Node{
+        &self.nodes[0]
+    }
+    pub fn get_vehicle(&self, index: usize) -> &Vehicle{
+        &self.vehicles[index]
+    }
+    pub fn get_first_vehicle_distance_cost(&self) -> f64{
+        self.vehicles[0].cost_per_distance
+    }
+
+    pub fn get_node_demand(&self, node_id: usize) -> f64 {
+        self.nodes[node_id as usize].demand
+    }
+    pub fn get_node(&self, node_id: usize) -> &Node {
+        &self.nodes[node_id]
+    }
+    /* pub fn n_evs(&mut self, n_evs: usize) -> &mut Self{
         self.n_evs = n_evs;
         self
     } */
-    pub fn get_client_range(&self) -> (u32, u32) {
+    fn get_client_range(&self) -> (usize, usize) {
         let start = 1 + self.n_sats + self.n_stations;
         (start, start + self.n_clients) 
     }
-    pub fn get_sat_range(&self) -> (u32, u32) {
+    fn get_sat_range(&self) -> (usize, usize) {
         let start = 1;
         (start, start + self.n_sats) 
     }
-    pub fn get_station_range(&self) -> (u32, u32) {
-        let start: u32 = 1 + self.n_sats;
+    fn get_station_range(&self) -> (usize, usize) {
+        let start: usize = 1 + self.n_sats;
         (start, start + self.n_stations) 
+    }
+    fn get_depot_range(&self) -> (usize, usize) {
+        // let start: usize = 1 + self.n_sats;
+        (0, 1) 
+    }
+    pub fn get_node_type(&self, node_id: usize) -> NodeType{
+        self.get_node(node_id).node_type
     }
 
     /* pub fn get_vehicle_capacity(&self, id:i32) -> f64 {
@@ -135,25 +178,25 @@ impl Instance {
     pub fn get_truck_demand(&self) -> f64 {
         self.truck_capacity
     }
-    pub fn get_n_sats(&self) -> u32 {
+    pub fn get_n_sats(&self) -> usize {
         self.n_sats
     }
-    pub fn get_n_clients(&self) -> u32 {
+    pub fn get_n_clients(&self) -> usize {
         self.n_clients
     }
-    pub fn get_n_stations(&self) -> u32 {
+    pub fn get_n_stations(&self) -> usize {
         self.n_stations
     }
-    pub fn get_n_trucks(&self) -> u32 {
+    pub fn get_n_trucks(&self) -> usize {
         self.n_trucks
     }
-    pub fn get_n_evs(&self) -> u32 {
+    pub fn get_n_evs(&self) -> usize {
         self.n_evs
     }
-    pub fn get_distance(&self, id1: u32, id2: u32) -> f64 {
+    pub fn get_distance(&self, id1: usize, id2: usize) -> f64 {
         self.distance_matrix[id1 as usize][id2 as usize]
     }
-    pub fn is_client(&self, node_id: u32) -> bool {
+    pub fn is_client(&self, node_id: usize) -> bool {
         self.nodes[node_id as usize].node_type == NodeType::Client
     }
     pub fn instance_from_file(filename: &str) -> Instance {
@@ -193,9 +236,10 @@ impl Instance {
         let mut ev_capacity = 0.0;
         let mut ev_battery = 0.0;
         for i in 0..(n_trucks as usize){
-            let capacity = num_matrix[i][0];
-            let cost_per_distance = num_matrix[i][1];
-            let cost = num_matrix[i][2]; // vehicle cost
+            let i_plus_1 = i +1;
+            let capacity = num_matrix[i_plus_1][0];
+            let cost_per_distance = num_matrix[i_plus_1][1];
+            let cost = num_matrix[i_plus_1][2]; // vehicle cost
             if i == 0 {
                 truck_capacity = capacity;
             }
@@ -204,6 +248,7 @@ impl Instance {
                 capacity,
                 vehicle_cost: cost,
                 cost_per_distance,
+                time_per_distance: TIME_PER_DISTANCE,
                 battery: None,
                 recharging_rate: None,
                 battery_per_distance: None,
@@ -211,7 +256,7 @@ impl Instance {
             vehicles.push(truck);
         }
         for i in 0..(n_evs as usize){
-            let idx = i + n_trucks as usize;
+            let idx = i + n_trucks+1 as usize;
             let capacity = num_matrix[idx][0];
             let cost_per_distance = num_matrix[idx][1];
             let cost = num_matrix[idx][2]; // vehicle cost
@@ -228,6 +273,7 @@ impl Instance {
                 capacity,
                 vehicle_cost: cost,
                 cost_per_distance,
+                time_per_distance: TIME_PER_DISTANCE,
                 battery: Some(battery),
                 recharging_rate: Some(recharging_rate),
                 battery_per_distance: Some(battery_per_distance),
@@ -235,6 +281,7 @@ impl Instance {
             vehicles.push(ev);
         }
         println!("vehicles: {:?}", vehicles);
+
         for i in 0..(n_nodes as usize){
             let node_type;
             if i < n_depots as usize {
@@ -258,13 +305,15 @@ impl Instance {
             let start_time_window = num_matrix[4+i][5];
             let end_time_window = num_matrix[4+i][6];
             let service_time = num_matrix[4+i][7];
+            let node_id = i;
             let node = Node { 
                 pos:(x, y), 
                 demand, 
                 start_time_window, 
                 end_time_window, 
                 service_time, 
-                node_type 
+                node_type,
+                node_id,
             };
             nodes.push(node);
         }
@@ -277,11 +326,11 @@ impl Instance {
             nodes,
             vehicles,
             distance_matrix,
-            n_evs as u32,
-            n_trucks as u32,
-            n_sats as u32,
-            n_clients as u32,
-            n_stations as u32,
+            n_evs,
+            n_trucks,
+            n_sats,
+            n_clients,
+            n_stations,
             3,
             truck_capacity,
             ev_capacity,
