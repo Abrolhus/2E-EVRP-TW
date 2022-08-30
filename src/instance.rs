@@ -35,6 +35,7 @@ pub struct Vehicle { // TODO: make fields private
     pub battery: Option<f64>,
     pub battery_per_distance: Option<f64>,
     pub recharging_rate: Option<f64>,
+    pub vehicle_id: usize,
 }
 
 #[derive(PartialEq, Debug, Default)]
@@ -51,6 +52,7 @@ pub struct Instance {
     truck_capacity: f64,
     ev_capacity: f64,
     ev_battery: f64,
+    best_stations_to_insert: Vec<Vec<(usize,f64)>>, // matrix //
 
     // n_depots: i32,
 }
@@ -89,23 +91,57 @@ impl Instance {
         ev_capacity: f64,
         ev_battery: f64,
     ) -> Instance { 
-        Instance{
+        let mut inst = Instance{
             nodes, vehicles, distance_matrix, n_evs, 
             n_trucks, n_sats, n_clients, n_stations, 
-            max_route_stations, truck_capacity, ev_capacity, ev_battery
+            max_route_stations, truck_capacity, ev_capacity, ev_battery, best_stations_to_insert: Vec::new()
+        };
+        let mut vec :Vec<Vec<(usize, f64)>>= Vec::new();
+        // let mut vec = Vec::with_capacity(5);
+        // vec.resize(5, 0);
+        for i in 0..inst.get_n_nodes() {
+            let mut aux = Vec::with_capacity(inst.get_n_nodes());
+            aux.resize(inst.get_n_nodes(), (999, 1e6)); // USE OPTION INSTEAD OF 999 1e6
+            vec.push(aux);
         }
+        for (i,node0) in inst.get_nodes().iter().enumerate(){
+            for (j,node1) in inst.get_nodes().iter().enumerate(){
+                if i != j {
+                    let mut best_station_id = 999;
+                    let mut best_distance = 1e6;
+                    for (s, station) in inst.get_stations().iter().enumerate(){
+                        if station.node_id != node0.node_id && station.node_id != node1.node_id{
+                            let distance = inst.get_insert_distance(station.node_id, node0.node_id, node1.node_id);
+                            if distance < best_distance{
+                                best_distance = distance;
+                                best_station_id = station.node_id;
+                            }
+                        }
+                    }
+                    vec[i][j] = (best_station_id, best_distance);
+                }
+            }
+        }
+        inst.best_stations_to_insert = vec;
+        inst
     }
     // get ranges
     pub fn get_clients(&self) -> &[Node]{
         let client_range = self.get_client_range();
         &self.nodes[client_range.0 .. client_range.1]
     }
+    pub fn get_best_station_to_insert_between(&self, a: usize, b: usize) -> (usize, f64){
+        self.best_stations_to_insert[a][b]
+    }
+    pub fn get_nodes(&self) -> &[Node]{
+        &self.nodes
+    }
     pub fn get_sats(&self) -> &[Node]{
         let sat_range = self.get_sat_range();
         &self.nodes[sat_range.0 .. sat_range.1]
     }
     pub fn get_stations(&self) -> &[Node]{
-        let station_range = self.get_client_range();
+        let station_range = self.get_station_range();
         &self.nodes[station_range.0 .. station_range.1]
     }
     pub fn get_depots(&self) -> &[Node]{
@@ -151,24 +187,14 @@ impl Instance {
     pub fn get_node_type(&self, node_id: usize) -> NodeType{
         self.get_node(node_id).node_type
     }
-
-    /* pub fn get_vehicle_capacity(&self, id:i32) -> f64 {
-        let vehicle = self.vehicles.get(id);
-        match vehicle {
-            Some(veh) => veh.capacity,
-            None      => panic!("Out of bounds! @ instance::get_truck_demand.")
-        }
+    pub fn get_insert_distance(&self, inserted: usize, a:usize, b:usize) -> f64{
+        self.get_distance(a, inserted) + self.get_distance(inserted, b) - self.get_distance(a, b)
     }
-    pub fn get_ev_battery(&self, id:i32) -> f64 {
-        let vehicle = self.vehicles.get(id);
-        match vehicle {
-            Some(veh) => match veh.battery{
-                Some(bat) => bat,
-                None => panic("Not electric vehicle @ instance::get_ev_battery.")
-            }
-            None => panic!("Out of bounds! @ instance::get_truck_demand.")
-        }
-    } */
+    pub fn get_insert_time(&self, inserted: usize, a:usize, b:usize, vehicle_id: usize) -> f64{
+        let vehicle = &self.get_vehicle(vehicle_id);
+        vehicle.time_per_distance*(self.get_distance(a, inserted) + self.get_distance(inserted, b) - self.get_distance(a, b)) 
+            + self.nodes[inserted].service_time
+    }
     pub fn get_ev_battery(&self) -> f64 {
         self.ev_battery
     }
@@ -252,6 +278,7 @@ impl Instance {
                 battery: None,
                 recharging_rate: None,
                 battery_per_distance: None,
+                vehicle_id: i
             };
             vehicles.push(truck);
         }
@@ -262,6 +289,7 @@ impl Instance {
             let cost = num_matrix[idx][2]; // vehicle cost
 
             let battery = num_matrix[idx][3];
+            // let battery = 1000f64;
             let recharging_rate = num_matrix[idx][4];
             let battery_per_distance = num_matrix[idx][5];
             if i == 0{
@@ -277,11 +305,14 @@ impl Instance {
                 battery: Some(battery),
                 recharging_rate: Some(recharging_rate),
                 battery_per_distance: Some(battery_per_distance),
+                vehicle_id: i + vehicles.len(),
             };
             vehicles.push(ev);
         }
         println!("vehicles: {:?}", vehicles);
 
+        // let first_node_index = 4;
+        let first_node_index = n_evs + n_trucks + 1;
         for i in 0..(n_nodes as usize){
             let node_type;
             if i < n_depots as usize {
@@ -299,12 +330,13 @@ impl Instance {
             else{
                 panic!("Node out of bounds")
             }
-            let x = num_matrix[4+i][0];
-            let y = num_matrix[4+i][1];
-            let demand = num_matrix[4+i][2];
-            let start_time_window = num_matrix[4+i][5];
-            let end_time_window = num_matrix[4+i][6];
-            let service_time = num_matrix[4+i][7];
+            println!("{} {}",n_nodes, i);
+            let x = num_matrix[first_node_index+i][0];
+            let y = num_matrix[first_node_index+i][1];
+            let demand = num_matrix[first_node_index+i][2];
+            let start_time_window = num_matrix[first_node_index+i][5];
+            let end_time_window = num_matrix[first_node_index+i][6];
+            let service_time = num_matrix[first_node_index+i][7];
             let node_id = i;
             let node = Node { 
                 pos:(x, y), 
@@ -336,6 +368,10 @@ impl Instance {
             ev_capacity,
             ev_battery,
         )
+    }
+
+    fn get_n_nodes(&self) -> usize {
+        self.nodes.len()
     }
 }
 fn distance(p1:&(f64,f64), p2:&(f64,f64)) -> f64{

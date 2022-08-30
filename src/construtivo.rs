@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 use crate::instance::Instance;
-use crate::solution::Solution;
+use crate::plot::plot_solution;
+use crate::solution::{Solution, check_solution, solution_to_file};
 use crate::instance::Node;
 use crate::ev_route::EvRoute;
 use crate::truck::TruckRoute;
-use crate::auxStructures::Insertion;
+use crate::aux_structures::{Insertion, SingleRouteInsertion};
 
 pub fn get_first_echelon_hint(solution:&mut Solution, instance: &Instance){
     if !solution.trucks.is_empty(){
@@ -33,7 +34,7 @@ pub fn get_first_echelon_hint(solution:&mut Solution, instance: &Instance){
     }
 }
 
-pub fn construtivo_sem_recarga(instance: &Instance) -> Solution {
+pub fn construtivo_sem_recarga(instance: &Instance, filename: &str) -> Result<Solution, String> {
     let mut solution = Solution::new(instance);
     println!("solution: {:#?}", solution);
     get_first_echelon_hint(&mut solution, instance);
@@ -75,7 +76,14 @@ pub fn construtivo_sem_recarga(instance: &Instance) -> Solution {
         }
         println!("{:#?}", lista_restrita);
         if lista_restrita.is_empty(){
-            panic!("Lista restrita vazia");
+            println!("{:#?}", solution);
+            check_solution(&solution, instance);
+            match solution_to_file(&solution, "solution.txt"){
+                Ok(()) => (),
+                _ => ()
+            }
+            plot_solution(instance, &solution, filename).unwrap();
+            return Err(String::from("Lista restrita vazia"));
         }
         let insertion = lista_restrita.pop_first().unwrap();
         println!("{:#?}", lista_restrita);
@@ -90,5 +98,58 @@ pub fn construtivo_sem_recarga(instance: &Instance) -> Solution {
         unvisited_clients.remove(index);
         lista_restrita.clear();
     }
-    solution
+    println!("foi");
+    println!("{:#?}", solution);
+    Ok(solution)
+}
+
+pub fn construtivo_rota_unica(instance: &Instance, filename: &str) -> Result<Solution, String> {
+    let mut solution = Solution::new(instance);
+    get_first_echelon_hint(&mut solution, instance);
+    println!("solution soh com primeiro nivel: {:#?}", solution);
+    let mut lista_restrita: BTreeSet<SingleRouteInsertion> = BTreeSet::new();
+    let mut unvisited_clients: Vec<usize> = Vec::new();
+
+    println!("solution com satelites vazios: {:#?}", solution);
+
+    for client in instance.get_clients(){
+        unvisited_clients.push(client.node_id);
+    }
+    while !unvisited_clients.is_empty() {
+        println!("unvisited clients: {:#?}", unvisited_clients);
+        let mut n_evs_in_solution = 0;
+        for client_id in &unvisited_clients {
+            // para cada satelite,
+            for (sat_id, satelite) in solution.get_satelites().iter().enumerate() {
+                // para cada rota de EV desse satelite,
+                match satelite.can_insert_in_single_route(instance, *client_id){
+                    Some(insertion) => { lista_restrita.insert(insertion); },
+                    None => ()
+                }
+            }
+        }
+        println!("{:#?}", lista_restrita);
+        if lista_restrita.is_empty(){
+            println!("{:#?}", solution);
+            check_solution(&solution, instance);
+            match solution_to_file(&solution, "solution.txt"){
+                Ok(()) => (),
+                _ => ()
+            }
+            plot_solution(instance, &solution, filename).unwrap();
+            return Err(String::from("Lista restrita vazia"));
+        }
+        let insertion = lista_restrita.pop_first().unwrap();
+        println!("{:#?}", lista_restrita);
+        println!("{:#?}", solution);
+        println!("{:?}", unvisited_clients);
+        solution.insert_single_route(instance, &insertion);
+        let index = unvisited_clients.binary_search(&insertion.node_id).unwrap();
+        unvisited_clients.remove(index);
+        lista_restrita.clear();
+    }
+            plot_solution(instance, &solution, filename).unwrap();
+    println!("foi");
+    println!("{:#?}", solution);
+    Ok(solution)
 }
